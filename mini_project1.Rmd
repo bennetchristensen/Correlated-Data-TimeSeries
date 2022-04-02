@@ -1,0 +1,244 @@
+---
+title: "Analyzing UEFA Champions League's Popularity with Google Trends"
+author: "Duc Ngo & Ben Christensen"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warnings=FALSE)
+```
+
+## Introduction
+
+Association Football, also known as Soccer is the largest and most popular sport in the world. Within soccer, you have huge events like the world cup, where countries face off every four years to crown a global champion. On the other side of the sport, you also have club competitions, where instead of countries facing off against each other. These clubs are based in cities with players from all over the world usually playing in national leagues. In Europe, the best of these club teams in each national league then play each other in a huge multi-month tournament known as the UEFA Champions League, ran by the Union of European Football Associations (UEFA). 
+
+UEFA Champions League is one of the biggest sports events of the year, especially on the club level. As one of the largest events in the worlds largest sport, it serves as a useful indicator of the popularity of Club Association Football. Looking at the popularity of this event helps us gauge the health of the sport, to see how it continues to grow in popularity, and see how COVID-19 has slowed down its growth. Also, with how the tournament is formatted, we can see if people are more excited to see their team qualify and play in the group stage in the fall, or if more people are excited to see the best teams, who they may not like as much as their own team, duke it out in the playoffs in the spring. 
+
+How is UEFA Champions League formatted? The way the tournament is run is that teams first qualify their way into the group stage. The 32 teams that made the cut are separated into eight groups of four. Each team plays the other three teams in their group twice, and the top two teams from each group move on to the playoffs. The group stage of the competition is usually held from September to December. In the playoffs, teams are ceded into a bracket based on how good they did in the group stage. They then go head-to-head, playing in two game series where the team that scores the most goals across the two games moves on, until the finals, where the two remaining teams face off for just one game, and the winner claims the trophy. The knockout phase usually runs from February to May, except for in 2020, when the entire phase was held in August instead after COVID-19 halted the competition.
+
+  
+```{r}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lubridate) #install.packages('lubridate') if needed
+library(astsa)
+library(splines)
+```
+
+## Data
+
+As our topic of interests is the UEFA Champions League, the most competitive club soccer competition around the world, we gather the data from 2004 to the present, using Worldwide Google Trends to see how the popularity has evolved over time. 
+
+After getting the data, we started doing some data cleaning as well as some data visualizations to further understand about the UEFA Champions League.
+
+```{r}
+uefaChampionsLeague <- read_csv("uefaChampionsLeague.csv", 
+    skip = 1)
+
+uefaChampionsLeague <- uefaChampionsLeague %>% 
+  mutate(Date = ymd(paste(Month, '-01')), 
+           month = month(Date), 
+           year = year(Date), 
+           decimal_date = month / 12 + year, 
+         uefa = `UEFA Champions League: (Worldwide)`, 
+         uefa_log = log(uefa),
+         pandemic = if_else(year == 2020, 1,0), 
+         group_stage = if_else(month %in% c(9, 10, 11, 12) , 1,0),
+         tournament_stage = if_else((month %in% c(2,3,4,5) & year %in% c(2004:2019, 2021)) | (month == 8 & year == 2020),1,0)) %>% 
+  
+  select(-`UEFA Champions League: (Worldwide)`)
+```
+
+For the data cleaning, first, we transform the Month column into the date time period. Moreover, we also change the uefa popularity score into a log function so that it can be easier to interpret and predict the popularity score. 
+
+Moreover, as you know, the pandemic has changed many things around the world and the UEFA Champions League is not an exception. As a result, we create a new variable called pandemic which illustrates whether the year is 2020 or not. Additionally, as the popularity for the UEFA Champions League differs depending on the stage of the tournament, we also create a group_stage and a tournament_stage, which reflects the period in which the each stage of the tournament takes place. The group stages happens from September to December, whereas the tournament stages begin in February and ends in May. 
+
+After creating these variables, we will create two visualizations to further investigate the dataset: 
+
+```{r}
+# Plot 1: 
+ggplot(data = uefaChampionsLeague, aes(y= uefa_log, x = month)) + geom_line() + 
+  facet_wrap(~year) + 
+  labs(title = "Popularity score for UEFA Champions League separated by year") +
+  theme_classic()
+```
+
+With this graph, we try to see the difference in popularity for the UEFA Champions League for each year. We can clearly see that the popularity score tends to reach its peak around May (when the final game happens). The only exception comes from 2020 where everything shuts down and they resume the competition in August 2020. For the other years, they follow the same trend. 
+
+```{r}
+#Plot 2: 
+uefaChampionsLeague %>% 
+  filter(year < 2022) %>% 
+  group_by(year) %>% 
+  mutate(popularity_score_each_year = mean(uefa)) %>% 
+  ggplot() + 
+  geom_line(aes(y = popularity_score_each_year, x = year), color = "blue") +
+  geom_line(aes(y = uefa, x = decimal_date), color = "black") + 
+  labs(title = "UEFA Champions League Popularity Score From 2004 to 2021",
+       y= NULL, 
+       x = NULL) +
+  theme(axis.title.x = element_blank(), 
+        axis.title.y = element_blank(),
+        plot.title = element_text(family = "Times")) + 
+  theme_classic()
+```
+
+For this graph, it shows the average popularity scores for each year for the term. It shows that on average the term has gotten more and more popular every year except for 2008 and 2016, where it remained relatively constant, and 2020, the Covid year, where there was a decrease in popularity, probably due to the quarterfinals, semifinals and finals all being in the same month instead of spread across many months. Also, 2017 appears to be a turning point in the increase in popularity, as before then the change seems pretty small and constant, but blows up going from 2016 to 2017 and onwards.
+
+
+## Trend and Seasonality
+
+After visualizing the dataset, we then move on to create models to estimate the popularity trend of the tournament: 
+
+```{r}
+uefaChampionsLeague <- uefaChampionsLeague %>% 
+  mutate(prediction_trend_pandemic = predict(lm(uefa_log ~ poly(decimal_date,2))))
+
+uefaChampionsLeague  %>% 
+  ggplot(aes(x = decimal_date, y = uefa_log)) +
+  geom_line() +
+  geom_line(aes(y = prediction_trend_pandemic), color = 'red') +
+  theme_classic()
+```
+
+The model we choose will be a polynomial model with degree = 2. Before, we have tried graphing the model using the loess function, however, the polynomial model is much smoother thus fits perfectly with the overall increasing trend in popularity for UEFA Champions League. Moreover, loeess model overcompensated for the spike in popularity after the 2017 season, so while the residuals had a relatively smaller fluctuation for the covid years, for all the other years the trend was not as general. After seeing the overall trend, we then continue with our analysis by graphing the residuals plot of the model: 
+
+```{r}
+uefaChampionsLeague <- uefaChampionsLeague %>%
+  mutate(Detrend = uefa_log - prediction_trend_pandemic)
+
+uefaChampionsLeague %>% 
+  ggplot(aes(x = decimal_date, y = Detrend)) + geom_smooth() + geom_point() + geom_line() + theme_classic()
+```
+
+For the residuals plot, we can see the model performs really well as the residuals mean lies around 0. However, the residual lines started to fluctuate more heavily around 2019, 2020, when the pandemic started to happen.   
+
+For the popularity of the UEFA Champions League, we can clearly see there are seasonality within the popularity as it fluctuates depending on the period of the month where the group stage or the tournament happens. With that, we will try to estimate the seasonality for our topic: 
+
+```{r}
+lm.season <- lm(Detrend ~ factor(month) * pandemic, data = uefaChampionsLeague)
+
+uefaChampionsLeague <- uefaChampionsLeague %>%
+    mutate(season_uefa = predict(lm.season, newdata = uefaChampionsLeague))
+
+uefaChampionsLeague %>%
+    ggplot(aes(x = month, y = Detrend, group = year)) + geom_point() + geom_line() +
+    geom_line(aes(y = season_uefa), color = "purple", size = 2) + geom_hline(yintercept = 0) +
+    theme_classic()
+```
+
+To estimate the seasonality, we fit a linear model for the detrend as a function of month(as a factor vector) while also accounting for the covid year. After that, we then use the function predict() on the linear model which will give us the seasonality for each month. The seasonality shows that the score peaks around May, then after the finals we see a steep decline during the summer when no champions league games are being held, followed by another, smaller increase in the fall around October when the group stages start up again. The data shows that the seasonality is just about exactly what we would expect, corresponding to when games are being played each year. In terms of the pandemic year (2020), due to the closure of the games, it actually reaches its peak in August, which aligns with the timeline for the game. Due to the difference between 2020 and the other period of time, we saw two seasonality lines: one line for the general trend and one line for the pandemic period. 
+
+After plotting the seasonality trend, we then try to see the errors for our prediction: 
+
+```{r}
+uefaChampionsLeague <- uefaChampionsLeague %>% 
+  mutate(Errors = Detrend - season_uefa) 
+
+uefaChampionsLeague %>% 
+  ggplot(aes(x = decimal_date, y = Errors)) + geom_point() + geom_line() + 
+  geom_hline(yintercept = 0) + theme_classic()
+```
+
+In terms of errors, we don't see many large errors from 2004 to 2015. We started to see higher error values close to 2020 and present, where we are getting to the new normal.
+
+After understanding about the overall popularity trend and the seasonality, we will try to remove it using differencing technique: 
+
+```{r}
+uefa_data <- ts(uefaChampionsLeague$uefa_log, start = c(2004,1), frequency = 12) # ts (time series) objects keeps track of time and the values.
+
+plot(diff(diff(uefa_data,lag = 1),lag = 12))
+```
+
+In terms of differencing, when looking at the graph, we believe that differencing is not the method we want to pursue. The reason for that is it would seem that even after differencing the variance is non-constant, in fact the variance is increasing over time, so using this method we cannot affirm stationarity. Because it is not stationarity, we probably do not want to use it for our forecasting. 
+
+Even though we couldn't affirm stationarity through differencing, the entire process up to this point has, for the most part, left behind independent white noise that we can continue to model in the hopes of forecasting the future popularity of the Champions League. 
+
+## Remaining White Noise
+
+```{r}
+astsa::acf2(na.omit(uefaChampionsLeague$Errors))
+```
+
+To make sense of the remaining white noise we look at the ACF and PACF graphs of the errors after removing the trend and seasonality. We see that after about every six lags there is a spike in autocorrelation, which shows that the seasonality has not been entirely accounted for. However, after a lag of one, both the ACF and PACF seem to drop near zero and for the most part stay within the range of white noise, the dotted blue line. Because the PACF and ACF look so similar, seemingly both dropping to zero after one lag, the model could be an AR(1), an MA(1), an ARMA(1,1), or because we still see some seasonality in our data, it could be an SAR(1) with a seasonality of six. 
+
+```{r}
+Uefa.ARfit <- sarima(uefaChampionsLeague$Errors, p = 1, d = 0, q = 0) #AR Model
+Uefa.MAfit <- sarima(uefaChampionsLeague$Errors, p = 0, d = 0, q = 1)  #MA Model
+Uefa.ARMAfit <- sarima(uefaChampionsLeague$Errors, p = 1, d = 0, q = 1) #ARMA Model
+Uefa.SARfit <- sarima(uefaChampionsLeague$Errors, p = 1, d = 0, q = 0, P=1, D=0, Q=0, S=6) #SAR model
+```
+
+After using the sarima function from the ASTSA package, a few things are immediately clear about all of the models. All of them pall the Ljung-Box test, as all of their p values for every lag tested stays above 0.05, which means that we don't reject the null hypothesis, which means that all of our residuals of all of our models are independent, so they are all fine to use in that regard. In addition, for their ACF plots, they all tell very similar stories, with autocorrelation mostly staying within the bounds of white noise. The SAR(1) model does edge out the competition, as the autocorrelations around lag 6 stay within the bounds of white noise in this model, but not in any of the other models.
+
+```{r}
+matrix(c("BIC for AR", round(Uefa.ARfit$BIC,3) ,"BIC for MA", round(Uefa.MAfit$BIC,3) ,"BIC for ARMA",round(Uefa.ARMAfit$BIC,3), "BIC for SAR", round(Uefa.SARfit$BIC,3)),nrow=2)
+```
+
+Just so we weren't only going off of slight differences in the ACF graphs, we also compared a test statistic in the form of BIC. BIC is a measure of error variance, with a lower BIC generally being viewed as a sign that one closely related model might be better than another. In our case, the SAR(1) model had the lowest BIC at 0.024, so we decided to stick with that, because not only does it have the favorable ACF graph, it also has the favorable BIC.
+```{r}
+trend.mod <- lm(uefa_log ~ poly(decimal_date,2,raw=TRUE) + factor(month)*pandemic, data=uefaChampionsLeague %>% filter(Date < ymd('2022-01-01')))
+X = model.matrix(trend.mod)[,-1] #removes intercept column
+
+uefaChampionsLeague %>% filter(Date < ymd('2022-01-01')) %>% pull(uefa_log) %>%
+ts(start = c(2004,1), frequency = 12) %>%
+sarima(p=1,d=0,q=0, P=1, S=6, xreg = X)
+```
+
+```{r}
+newdat <- data.frame(Date = max(uefaChampionsLeague$Date) %m+% months(-1:24))
+newdat <- newdat %>%
+  mutate(decimal_date=decimal_date(Date)) %>%
+  mutate(month=month(Date)) %>%
+  mutate(pandemic=0)
+
+NewX <- model.matrix(~  poly(decimal_date,2,raw=TRUE) + factor(month)*pandemic, data = newdat)[,-1]
+
+uefaChampionsLeague %>% filter(Date < ymd('2022-01-01')) %>% pull(uefa_log) %>%
+ts(start = c(2004,1), frequency = 12) %>%
+sarima.for(n.ahead =  26, p = 1, d = 0, q = 0, P=1, S=6, xreg = X, newxreg = NewX,plot.all=TRUE)
+```
+Finally, we expanded our data set to two years in the future, and using our SAR(1) model, we forecasted the future interest in the UEFA Champions League. We continued the trend into the future as if it will remain generally uninterupted and continue as it has been going, following its season pattern of peaking every six months, with the earlier peak in the year being higher.
+
+## Conclusion
+
+Based on our results and our broadcasting we can generally infer that club soccer is doing pretty well in spite of Covid related complications. While August 2020 is the all time peak, I would be hesitant to claim that that means that Covid actually boosted the popularity of the event because that interest was condensed into one month instead of spread across a few months like it would be in a regular year. In spite of this, our model still predicts interest in the event to increase by very moderate amounts for the group stage and knockout phase and a fairly substantial increase for the off season in the summer. This is very promising for the health of the game, as it shows an overall increase in the event even while games aren't being played. It means that people are doing more than just checking scores right after the game by Googling it. 
+
+In terms of this debate between the popularity of the group stage versus the knockout phase, our model predicts that the knockout phase will grow in popularity faster than the group stage, by a moderate margin. The Knockout phase, in April, its expected peak month, will increase from a predicted score of about 64 in 2022 to a predicted score of about 71 in 2023. In September, the group stages predicted peak month we are expecting an increase from about 45 to about 48. This difference is more than double. The gap between the popularity is growing, so even as the popularity of the tournament increases as a whole, people care more and more about the knockouts and comparatively less about the group stage. 
+
+An important thing to note is that these predictions have standard error, and because of how much there is, around ~0.22 for every value, it is still totally within reason that we could see a slight decrease in popularity in the next two years. We expect modest growth, but that modest growth very easily could be a modest decline. 
+
+A potential flaw in the current prediction method is that the google trend data is scaled so that 100 is just whatever the peak popularity was. All the other values are taken as a percent of that peak. If we predict an increase in popularity, as we do, we probably ought to assign that new peak as the 100, and scale every other data point down from the new peak.
+
+One last limitation to consider is that, for this data we assume that the seasonality will generally stay constant, however, UEFA is constantly considering format changes to improve the competition. Things like the Super League or changes in when games are played can all change when seasonal interest occurs. It isn't unreasonable to see a change in the format of the tournament in the next two years, but it is near impossible to predict for these changes without having insider information. 
+
+## Citations
+
+Box, George; Jenkins, Gwilym M.; Reinsel, Gregory C. (1994). Time Series Analysis: Forecasting and Control (Third ed.). 
+  Prentice-Hall. ISBN 0130607746.
+
+Kruskic, Haris (2019). UEFA Champions League Explained: How the Tournament Works. 
+  Bleacher Report, San Fransisco, United States. 
+  https://bleacherreport.com/articles/2819840-uefa-champions-league-explained-how-the-tournament-works
+
+R Core Team (2013). R: A language and environment for statistical
+  computing. R Foundation for Statistical Computing, Vienna, Austria.
+  http://www.R-project.org/.
+  
+Shvili, Jason (2020). The Most Popular Sports in the World. 
+  WorldAtlas, St Laurent, Canada.
+  https://www.worldatlas.com/articles/what-are-the-most-popular-sports-in-the-world.html.
+  
+Stoffer, David (2021). astsa: Applied Statistical Time Series
+  Analysis. R package version 1.14.
+  https://CRAN.R-project.org/package=astsa.
+  
+Union of European Football Associations(UEFA) (2020). UEFA Competitions to Resume in August.
+  UEFA, Nyon, Switzerland.
+  https://www.uefa.com/insideuefa/about-uefa/news/025e-0fb6101cfdbf-8b878372d79d-1000--uefa-competitions-to-resume-in-august/
+  
+## Acknowledments
+
+We would like to thank Professor Brianna Heggeseth for her invaluable help during office hours. 
